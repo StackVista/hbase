@@ -25,10 +25,7 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import java.io.IOException;
-import java.util.Collections;
-import java.util.Map;
-import java.util.NavigableMap;
-import java.util.TreeMap;
+import java.util.*;
 
 import org.apache.hadoop.hbase.util.ByteStringer;
 import org.apache.commons.logging.Log;
@@ -135,9 +132,7 @@ public class TestCoprocessorEndpoint {
       });
   }
 
-  @Test
-  public void testAggregation() throws Throwable {
-    HTable table = new HTable(util.getConfiguration(), TEST_TABLE);
+  private void internalAggregation(HTable table) throws Throwable {
     Map<byte[], Long> results = sum(table, TEST_FAMILY, TEST_QUALIFIER,
       ROWS[0], ROWS[ROWS.length-1]);
     int sumResult = 0;
@@ -324,6 +319,59 @@ public class TestCoprocessorEndpoint {
     }
   }
 
+  @Test
+  public void testAggregation() throws Throwable {
+    HTable table = new HTable(util.getConfiguration(), TEST_TABLE);
+    internalAggregation(table);
+  }
+
+  @Test
+  public void testAggregationWithRegionSplit() throws Throwable {
+    TestHTable table = new TestHTable(util.getConfiguration(), TEST_TABLE.getName());
+    // load region location to the cache
+    table.getRegionsInRange(HConstants.EMPTY_BYTE_ARRAY,
+            HConstants.EMPTY_BYTE_ARRAY);
+    table.hackForGetStartKeysInRange = true;
+    internalAggregation(table);
+  }
+
+  public static class TestHTable extends HTable {
+
+    boolean hasSplit = false;
+    
+    boolean hackForGetStartKeysInRange = false;
+
+    public TestHTable(Configuration conf, byte[] tableName) throws IOException {
+      super(conf, tableName);
+    }
+
+    @Override
+    protected List<byte[]> getStartKeysInRange(byte[] start, byte[] end)
+            throws IOException {
+      List<byte[]> result = super.getStartKeysInRange(start, end);
+      
+      if (hackForGetStartKeysInRange && !hasSplit ) {
+        HBaseAdmin hba = new HBaseAdmin(super.getConfiguration());
+        try {
+          hba.split(super.getTableName(), ROWS[rowSeperator1 - 2]);
+          hba.split(super.getTableName(), ROWS[rowSeperator1 + 2]);
+          hba.split(super.getTableName(), ROWS[rowSeperator2 + 2]);
+
+          long timeout = System.currentTimeMillis() + (15 * 1000);
+          while ((System.currentTimeMillis() < timeout)
+                  && (super.getRegionLocations().size() != 6)) {
+            Thread.sleep(250);
+          }
+        } catch (InterruptedException e) {
+          e.printStackTrace();
+        }
+        hba.close();
+        hasSplit = true;
+      }
+      return result;
+    }
+  }
+  
   private static byte[][] makeN(byte[] base, int n) {
     byte[][] ret = new byte[n][];
     for (int i = 0; i < n; i++) {

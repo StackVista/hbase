@@ -1616,9 +1616,13 @@ public class HTable implements HTableInterface {
     // get regions covered by the row range
     List<byte[]> keys = getStartKeysInRange(startKey, endKey);
 
+    final List<Pair<byte[], byte[]>> missedRows = new ArrayList<Pair<byte[], byte[]>>();
     Map<byte[],Future<R>> futures =
         new TreeMap<byte[],Future<R>>(Bytes.BYTES_COMPARATOR);
-    for (final byte[] r : keys) {
+    int rowsSize = keys.size();
+    for (int i = 0; i < rowsSize; i++) {
+      final byte[] r = keys.get(i);
+      final byte[] nextRow = (i + 1 < rowsSize) ? keys.get(i + 1) : endKey;
       final RegionCoprocessorRpcChannel channel =
           new RegionCoprocessorRpcChannel(connection, tableName, r, rpcCallerFactory,
               rpcControllerFactory);
@@ -1628,8 +1632,16 @@ public class HTable implements HTableInterface {
               T instance = ProtobufUtil.newServiceStub(service, channel);
               R result = callable.call(instance);
               byte[] region = channel.getLastRegion();
+              HRegionInfo actualExecutedRegion = channel.getActualExecutedRegion();
               if (callback != null) {
                 callback.update(region, r, result);
+              }
+              if ((Bytes.compareTo(actualExecutedRegion.getEndKey(), nextRow) < 0
+                      || Bytes.equals(nextRow, HConstants.EMPTY_END_ROW)) &&
+                      !Bytes.equals(actualExecutedRegion.getEndKey(),HConstants.EMPTY_END_ROW)) {
+                synchronized(missedRows){
+                  missedRows.add(new Pair<byte[], byte[]>(actualExecutedRegion.getEndKey(),nextRow));
+                }
               }
               return result;
             }
@@ -1649,9 +1661,15 @@ public class HTable implements HTableInterface {
             .initCause(ie);
       }
     }
+    if (!missedRows.isEmpty()) {
+      for (Pair<byte[], byte[]> lostRow : missedRows) {
+        coprocessorService(service, lostRow.getFirst(), lostRow.getSecond(),
+                callable, callback);
+      }
+    }
   }
 
-  private List<byte[]> getStartKeysInRange(byte[] start, byte[] end)
+  protected List<byte[]> getStartKeysInRange(byte[] start, byte[] end)
   throws IOException {
     if (start == null) {
       start = HConstants.EMPTY_START_ROW;
