@@ -20,6 +20,7 @@ package org.apache.hadoop.hbase.ipc;
 
 import java.io.IOException;
 
+import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.util.ByteStringer;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -52,6 +53,7 @@ public class RegionCoprocessorRpcChannel extends CoprocessorRpcChannel{
   private final TableName table;
   private final byte[] row;
   private byte[] lastRegion;
+    private HRegionInfo actualExecutedReGion;
 
   private RpcRetryingCallerFactory rpcFactory;
 
@@ -89,7 +91,8 @@ public class RegionCoprocessorRpcChannel extends CoprocessorRpcChannel{
     RegionServerCallable<CoprocessorServiceResponse> callable =
         new RegionServerCallable<CoprocessorServiceResponse>(connection, table, row) {
           public CoprocessorServiceResponse call() throws Exception {
-            byte[] regionName = getLocation().getRegionInfo().getRegionName();
+              actualExecutedReGion = location.getRegionInfo();
+              byte[] regionName = actualExecutedReGion.getRegionName();
             return ProtobufUtil.execService(getStub(), call, regionName, controller);
           }
         };
@@ -108,6 +111,10 @@ public class RegionCoprocessorRpcChannel extends CoprocessorRpcChannel{
     }
     return response;
   }
+
+    public HRegionInfo getActualExecutedRegion() {
+        return actualExecutedReGion;
+    }
 
   public byte[] getLastRegion() {
     return lastRegion;
